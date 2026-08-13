@@ -1,0 +1,21 @@
+groups:
+  demo:
+    sessions:
+      fake-ssh-tunnel:
+        backend: tmux
+        provider: ssh-tunnel
+        tags: [ssh, tunnel]
+        summary: fake SSH tunnel reconnect integration test
+        with:
+          host: fake-host
+          mode: local
+          listen: 127.0.0.1:45999
+          target: 127.0.0.1:46000
+
+sessions:
+  local-clock:
+    backend: tmux
+    tags: [example]
+    summary: periodic local output
+    command:
+      argv: ["sh", "-lc", "while true; do date; sleep 1; done"]
