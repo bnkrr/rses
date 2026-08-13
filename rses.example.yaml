@@ -1,0 +1,55 @@
+groups:
+  dev:
+    sessions:
+      jump-db:
+        backend: tmux
+        provider: cloudflared-tcp
+        tags: [db]
+        summary: 127.0.0.1:15432 -> prod-db.internal:5432
+        with:
+          hostname: tunnel.example.com
+          target: prod-db.internal:5432
+          listen: 127.0.0.1:15432
+
+  demo:
+    sessions:
+      remote-clock:
+        backend: ssh-tmux
+        tags: [remote, example]
+        summary: periodic remote output in tmux
+        host: ssh-dev
+        command:
+          argv: ["sh", "-lc", "while true; do date; sleep 1; done"]
+
+      remote-clock-tunnel:
+        backend: tmux
+        provider: cloudflared-tcp
+        tags: [remote, tunnel]
+        summary: example tunnel that starts remote-clock first
+        depends_on: [remote-clock]
+        stop_dependencies: [remote-clock]
+        with:
+          hostname: tunnel.example.com
+          target: 127.0.0.1:5173
+          listen: 127.0.0.1:35173
+
+      remote-clock-ssh-tunnel:
+        backend: tmux
+        provider: ssh-tunnel
+        tags: [remote, tunnel, ssh]
+        summary: ssh tunnel that starts remote-clock first
+        depends_on: [remote-clock]
+        stop_dependencies: [remote-clock]
+        with:
+          host: ssh-dev
+          mode: local
+          listen: 127.0.0.1:35174
+          target: 127.0.0.1:5173
+
+sessions:
+  local-clock:
+    backend: tmux
+    tags: [example]
+    summary: periodic local output
+    command:
+      argv: ["sh", "-lc", "while true; do date; sleep 1; done"]

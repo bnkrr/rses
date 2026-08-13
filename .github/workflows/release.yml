@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.5"
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Verify
+        run: |
+          grep -F "## [${GITHUB_REF_NAME#v}]" CHANGELOG.md
+          go test ./...
+          go vet ./...
+          go test -tags=integration -timeout=2m ./integration/...
+
+      - name: Build archives
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME}"
+          archive_version="${version#v}"
+          archive_version="${archive_version//\//-}"
+          targets=(
+            "linux amd64"
+            "linux arm64"
+            "darwin amd64"
+            "darwin arm64"
+          )
+
+          mkdir -p dist
+          for target in "${targets[@]}"; do
+            read -r goos goarch <<< "${target}"
+            archive="rses_${archive_version}_${goos}_${goarch}"
+
+            mkdir -p "dist/${archive}"
+            GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 go build \
+              -trimpath \
+              -ldflags="-s -w -X github.com/bnkrr/rses/internal/buildinfo.Version=${version}" \
+              -o "dist/${archive}/rses" \
+              ./cmd/rses
+            chmod 0755 "dist/${archive}/rses"
+
+            cp LICENSE THIRD_PARTY_NOTICES README.md README.zh-CN.md CHANGELOG.md "dist/${archive}/"
+            tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
+          done
+
+          (cd dist && sha256sum rses_*.tar.gz > checksums.txt)
+
+      - name: Verify release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          archive_version="${version#v}"
+          archive_version="${archive_version//\//-}"
+
+          binary="dist/rses_${archive_version}_linux_amd64/rses"
+          test "$("${binary}" version)" = "rses ${version}"
+          go version -m "${binary}" | awk '$1 == "dep" { print $2 " " $3 }' | while IFS= read -r module; do
+            grep -Fqx "${module}" THIRD_PARTY_NOTICES
+          done
+          init_dir="$(mktemp -d)"
+          "${binary}" init "${init_dir}/rses"
+          test -f "${init_dir}/rses/rses.yaml"
+          test -f "${init_dir}/rses/providers/ssh-tunnel/provider.json"
+          test -f "${init_dir}/rses/providers/cloudflared-tcp/provider.json"
+
+          for archive in dist/rses_*.tar.gz; do
+            root="$(basename "${archive}" .tar.gz)"
+            tar -tzf "${archive}" | grep -Fx "${root}/rses"
+            tar -tzf "${archive}" | grep -Fx "${root}/LICENSE"
+            tar -tzf "${archive}" | grep -Fx "${root}/THIRD_PARTY_NOTICES"
+          done
+
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v version="${version}" '
+            index($0, "## [" version "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found && /^\[[^]]+\]:/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create \
+            "${GITHUB_REF_NAME}" \
+            dist/*.tar.gz \
+            dist/checksums.txt \
+            --verify-tag \
+            --notes-file release-notes.md \
+            --title "rses ${GITHUB_REF_NAME}"
