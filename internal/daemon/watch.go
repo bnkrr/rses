@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	watchWindowsMarker  = "__RSES_WATCH_WINDOWS__"
-	watchLogMarker      = "__RSES_WATCH_LOG__"
-	watchLogBytesMarker = "__RSES_WATCH_LOG_BYTES__"
+	watchWindowsMarker = "__RSES_WATCH_WINDOWS__"
+	watchLogMarker     = "__RSES_WATCH_LOG__"
 )
 
 type watchGroupResult struct {
@@ -216,69 +215,49 @@ func watchSnapshotScript(plans []tmux.Plan, selectedName string, lines int) stri
 
 	var b strings.Builder
 	b.WriteString("command -v tmux >/dev/null || { echo 'tmux not found' >&2; exit 127; }\n")
-	b.WriteString("printf '%s\\n' " + tmux.ShellQuote(watchWindowsMarker) + "\n")
+	b.WriteString("printf '\\000%s\\000' " + tmux.ShellQuote(watchWindowsMarker) + "\n")
 	b.WriteString("tmux list-windows -t " + tmux.ShellQuote(scope) + " -F '#{window_name}' 2>/dev/null || true\n")
-	b.WriteString("log_file=$(mktemp 2>/dev/null || printf '/tmp/rses-watch-log-$$')\n")
-	b.WriteString("trap 'rm -f \"$log_file\"' EXIT HUP INT TERM\n")
+	b.WriteString("printf '\\000%s\\000' " + tmux.ShellQuote(watchLogMarker) + "\n")
 	if selected != nil {
 		b.WriteString("if [ -f " + tmux.ShellQuotePath(selected.LogPath) + " ]; then\n")
 		b.WriteString("  tail -n ")
 		b.WriteString(intString(lines))
 		b.WriteByte(' ')
 		b.WriteString(tmux.ShellQuotePath(selected.LogPath))
-		b.WriteString(" > \"$log_file\"\nelse\n")
+		b.WriteString("\nelse\n")
 		b.WriteString("  tmux capture-pane -p -t " + tmux.ShellQuote(selected.Target) + " -S -")
 		b.WriteString(intString(lines))
-		b.WriteString(" > \"$log_file\" 2>/dev/null || true\n")
+		b.WriteString(" 2>/dev/null || true\n")
 		b.WriteString("fi\n")
 	}
-	b.WriteString("printf '%s\\n' " + tmux.ShellQuote(watchLogBytesMarker) + "\n")
-	b.WriteString("wc -c < \"$log_file\" | tr -d ' '\n")
-	b.WriteString("cat \"$log_file\"\n")
 	return b.String()
 }
 
 func parseWatchSnapshotOutput(out string) (map[string]bool, string) {
 	windows := map[string]bool{}
-	section := ""
-	var log strings.Builder
-	lines := strings.SplitAfter(out, "\n")
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSuffix(line, "\n")
-		if strings.TrimSuffix(trimmed, "\r") == watchWindowsMarker {
-			section = "windows"
-			continue
-		}
-		if strings.TrimSuffix(trimmed, "\r") == watchLogBytesMarker {
-			if i+1 >= len(lines) {
-				return windows, ""
-			}
-			size, err := strconv.Atoi(strings.TrimSpace(lines[i+1]))
-			if err != nil || size <= 0 {
-				return windows, ""
-			}
-			rest := strings.Join(lines[i+2:], "")
-			if len(rest) < size {
-				return windows, rest
-			}
-			return windows, rest[:size]
-		}
-		if strings.TrimSuffix(trimmed, "\r") == watchLogMarker {
-			section = "legacy-log"
-			continue
-		}
-		switch section {
-		case "windows":
-			name := strings.TrimRight(line, "\r\n")
-			if name != "" {
-				windows[name] = true
-			}
-		case "legacy-log":
-			log.WriteString(line)
+	windowsFrame := watchFrame(watchWindowsMarker)
+	logFrame := watchFrame(watchLogMarker)
+	windowsStart := strings.Index(out, windowsFrame)
+	if windowsStart < 0 {
+		return windows, ""
+	}
+	windowsStart += len(windowsFrame)
+	logOffset := strings.Index(out[windowsStart:], logFrame)
+	if logOffset < 0 {
+		return windows, ""
+	}
+	for _, line := range strings.Split(out[windowsStart:windowsStart+logOffset], "\n") {
+		name := strings.TrimRight(line, "\r")
+		if name != "" {
+			windows[name] = true
 		}
 	}
-	return windows, log.String()
+	logStart := windowsStart + logOffset + len(logFrame)
+	return windows, out[logStart:]
+}
+
+func watchFrame(marker string) string {
+	return "\x00" + marker + "\x00"
 }
 
 func containsPlan(plans []tmux.Plan, name string) bool {

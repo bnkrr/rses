@@ -305,7 +305,7 @@ func TestWatchSnapshotHostScopeOnlyTouchesRequestedVisibleSpecs(t *testing.T) {
 
 func TestParseWatchSnapshotOutputPreservesMarkerLinesInLog(t *testing.T) {
 	want := "first\n__RSES_WATCH_WINDOWS__\n__RSES_WATCH_LOG__\nlast\n"
-	out := fmt.Sprintf("__RSES_WATCH_WINDOWS__\none\n__RSES_WATCH_LOG_BYTES__\n%d\n%s", len(want), want)
+	out := "login banner\n" + watchFrame(watchWindowsMarker) + "one\n" + watchFrame(watchLogMarker) + want
 
 	windows, log := parseWatchSnapshotOutput(out)
 
@@ -314,6 +314,25 @@ func TestParseWatchSnapshotOutputPreservesMarkerLinesInLog(t *testing.T) {
 	}
 	if log != want {
 		t.Fatalf("log = %q, want %q", log, want)
+	}
+}
+
+func TestWatchSnapshotScriptStreamsLogWithoutTemporaryFile(t *testing.T) {
+	plan, err := tmuxPlan("/tmp/rses-remote", remoteSpec("one", "h1"), 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	script := watchSnapshotScript([]tmuxrt.Plan{plan}, "one", 25)
+	for _, forbidden := range []string{"mktemp", "log_file", "wc -c"} {
+		if strings.Contains(script, forbidden) {
+			t.Fatalf("snapshot script contains %q: %s", forbidden, script)
+		}
+	}
+	for _, want := range []string{"printf '\\000%s\\000'", "tail -n 25", tmuxrt.ShellQuotePath(plan.LogPath)} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("snapshot script missing %q: %s", want, script)
+		}
 	}
 }
 
@@ -490,7 +509,7 @@ for arg in "$@"; do
 done
 printf '%s %s\n' "$host" "$script" >> "$RSES_FAKE_SSH_LOG"
 case "$script" in
-  *'__RSES_WATCH_WINDOWS__'*) printf '__RSES_WATCH_WINDOWS__\none\n__RSES_WATCH_LOG_BYTES__\n11\nremote log\n'; exit 0 ;;
+  *'__RSES_WATCH_WINDOWS__'*) printf '\000__RSES_WATCH_WINDOWS__\000one\n\000__RSES_WATCH_LOG__\000remote log\n'; exit 0 ;;
   *'tail -n'*) printf 'remote log\n'; exit 0 ;;
   *capture-pane*) printf 'remote log\n'; exit 0 ;;
   *new-window*) exit 0 ;;

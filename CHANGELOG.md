@@ -5,6 +5,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Watch snapshots no longer require writable temporary storage on the target
+  host, so selected logs remain available when its temporary filesystem is
+  full or read-only.
+
 ## [0.1.0] - 2026-08-13
 
 Initial public release.
