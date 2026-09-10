@@ -5,7 +5,7 @@ go 1.25.10
 require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
-	github.com/mattn/go-runewidth v0.0.27
+	github.com/mattn/go-runewidth v0.0.29
 	gopkg.in/yaml.v3 v3.0.1
 )
 
